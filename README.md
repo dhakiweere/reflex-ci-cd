@@ -15,7 +15,10 @@ The hosted web application is both:
 This creates a bi-directional CI/CD workflow, enabling real-time, user-driven application evolution.
 
 ## Architecture Overview
-![aws_arch](./demo/reflex-arch-diagram.png)
+![aws_arch](./demo/diagram_architecture.png)
+
+## Process Diagram 
+![aws_process](./demo/diagram_process.png)
 
 The system operates as follows:
 
