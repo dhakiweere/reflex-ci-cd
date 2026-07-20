@@ -1,92 +1,163 @@
-# Reflex CI/CD
+# Reflex
 
-> Full-Duplex Continuous Integration & Deployment Pipeline
+A self-modifying web application. Visitors see the app's own source code in an embedded Monaco editor, can edit it in-browser, and push changes that trigger a real AWS build-and-deploy pipeline — making their version go live for everyone.
 
-Reflex CI/CD is an experimental full-duplex (bi-directional) CI/CD system built on AWS that blurs the traditional boundary between code and deployment. Unlike conventional pipelines that flow strictly from repository → deployment, Reflex enables a live web application to push code changes back to the repository, triggering an immediate rebuild and redeployment of itself.
+## How it works
 
-At its core, Reflex demonstrates a self-updating web application where user-initiated code changes made directly through the application UI are treated as first-class commits in the CI/CD lifecycle.
+1. The browser loads the app's own `page.jsx` source at runtime from the `/source` API endpoint and displays it in a Monaco editor.
+2. A visitor edits the code and clicks **Push**. The content is sent as plain text to the `/push` API.
+3. The `push` Lambda starts a CodeBuild run with the edited source as an environment variable (`EDITED_SOURCE`), and updates the SSM state parameter to `"modified"`.
+4. CodeBuild writes the edited source to `reflex-web/src/page.jsx`, builds the Vite app, syncs the output to the `live/` S3 prefix, and invalidates the CloudFront distribution.
+5. All visitors now see the modified version at the same URL.
 
-## Core Idea
+Anyone can click **Reset** to restore the original stable build — the `reset` Lambda flips SSM state back to `"stable"` and invalidates CloudFront, which falls back to the `stable/` S3 prefix.
 
-The hosted web application is both:
-- **A deployment target** (receiving updates via GitHub Actions), and
-- **A deployment source** (pushing code changes back to GitHub)
+## Repository structure
 
-This creates a bi-directional CI/CD workflow, enabling real-time, user-driven application evolution.
+```
+reflex-web/       React 18 + Vite 5 frontend (all commands run from here)
+reflex-api/       Node 20 Lambda handlers (ES modules, raw handlers)
+reflex-infra/     Terraform infrastructure modules
+buildspec.yml     CodeBuild buildspec at repo root
+```
 
-## Architecture Overview
-![aws_arch](./demo/diagram_architecture.png)
+### reflex-web/
 
-## Process Diagram 
-![aws_process](./demo/diagram_process.png)
+Vite SPA with Monaco editor for editing `page.jsx` in-browser. Plain CSS, no Tailwind, no UI library, no TypeScript.
 
-The system operates as follows:
+| File | Purpose |
+|------|---------|
+| `src/main.jsx` | React entry point |
+| `src/App.jsx` | Root component — loads state from `/current-state`, renders editor + action bar |
+| `src/page.jsx` | The editable surface — default export rendered below the editor, replaced on push |
+| `src/api.js` | `getCurrentState()`, `pushCode()`, `resetToStable()`, `getSource()` — all read `VITE_API_BASE_URL` from env |
+| `src/components/Editor.jsx` | Monaco editor wrapper, loads `page.jsx` source from `/source` |
+| `src/components/StatusBar.jsx` | Shows "Modified by …" when state is modified, hidden when stable |
+| `src/components/ActionBar.jsx` | Push button always visible; Reset button shown conditionally based on owner cookie |
 
-1. The application is hosted on an EC2 instance, running as a Docker container
-2. Route 53 resolves the application domain and routes traffic to an Application Load Balancer (ALB)
-3. The ALB forwards requests to the EC2-hosted web application (stable version)
-4. Users interact with a Monaco Editor–powered web UI, allowing them to modify the application code directly from the browser
+### reflex-api/
 
-### Deployment Flow
+Four Lambda handlers sharing a single deployment package zipped by Terraform at apply time.
 
-When changes are submitted:
+| File | Purpose |
+|------|---------|
+| `handlers/push.js` | Parses plain text body, triggers CodeBuild with `EDITED_SOURCE`, writes SSM state to `modified`, returns `Set-Cookie: owner=true` |
+| `handlers/currentState.js` | Reads SSM parameter and returns `{ state, modifiedBy, modifiedAt }` |
+| `handlers/reset.js` | Sets SSM state to `stable`, invalidates CloudFront `/*`, clears owner cookie |
+| `handlers/source.js` | Fetches `page.jsx` from S3 `stable/` prefix, returns as `text/plain` |
+| `lib/cors.js` | CORS headers helper with `CLOUDFRONT_DOMAIN` as `Access-Control-Allow-Origin` |
+| `lib/ssm.js` | `getState()` / `setState()` wrapping AWS SDK SSM |
+| `lib/codebuild.js` | `triggerBuild(editedSource)` calling `codebuild:StartBuild` |
+| `lib/cloudfront.js` | `invalidate(paths)` calling `cloudfront:CreateInvalidation` |
 
-1. The application commits and pushes the updated code to a GitHub repository
-2. This triggers a GitHub Actions workflow
-3. The workflow builds a new Docker image and pushes it to Amazon ECR
-4. GitHub Actions then securely SSHs into the EC2 instance
-5. The EC2 instance pulls the latest image and runs the updated container
-6. New incoming requests are served by the freshly deployed version
+### reflex-infra/
 
-This process happens automatically and near-instantly, after which users are redirected to the updated application.
+Terraform modules for the full AWS stack.
 
-## CI/CD Pipeline Characteristics
+| Module | Resources |
+|--------|-----------|
+| `s3` | Bucket with `stable/` and `live/` prefixes, static website config, OAI |
+| `cloudfront` | Distribution with S3 origin, SPA error pages, HTTPS redirect |
+| `lambda` | 4 functions (`push`, `current-state`, `reset`, `source`) from a single zip of `reflex-api/` |
+| `api_gateway` | HTTP API with routes `POST /push`, `GET /current-state`, `POST /reset`, `GET /source`, CORS enabled |
+| `codebuild` | Project with GitHub source, reads `buildspec.yml`, env vars for S3 + CloudFront |
+| `ssm` | Parameter `/reflex/state` initialized to `{ state: "stable" }` |
+| `iam` | Roles for Lambda (SSM, S3, CodeBuild, CloudFront, logs) and CodeBuild (S3, CloudFront, logs) |
 
-- **Full-duplex CI/CD**: Code → Deploy and Deploy → Code
-- Containerized deployments using Docker
-- Automated builds and image versioning via GitHub Actions
-- Private container registry using Amazon ECR
-- Remote container lifecycle management via SSH
-- Stateless redeployments with predictable rollback behavior
+### buildspec.yml
 
-## Infrastructure & Automation
+CodeBuild pipeline phases:
+1. **install** — `npm ci` in `reflex-web/`
+2. **pre_build** — writes `$EDITED_SOURCE` to `src/page.jsx`
+3. **build** — `npm run build` (Vite produces `dist/`)
+4. **post_build** — syncs `dist/` to S3 `live/` prefix, invalidates CloudFront `/live/*`
 
-- AWS resources are provisioned using Terraform (stable build)
-- ECR Lifecycle Policies and Cron-based cleanups ensure resource hygiene
-- Environment reset and synchronization logic keeps deployed state aligned with repository state
+## Prerequisites
 
-## Monitoring & Observability
+- Node.js 20
+- AWS CLI configured with credentials
+- Terraform >= 1.0
 
-Operational visibility is provided through a containerized monitoring stack:
+## Setup
 
-- **Prometheus** for metrics collection
-- **Node Exporter** for EC2 system metrics
-- **Grafana** for visualization and dashboards
+### 1. Provision infrastructure
 
-All monitoring services run alongside the CI/CD system using Docker Compose, providing real-time insights into system health and performance.
+```bash
+cd reflex-infra
+terraform init
+terraform apply \
+  -var="aws_region=us-east-1" \
+  -var="s3_bucket_name=reflex-prod" \
+  -var="github_repo_url=https://github.com/your-org/reflex"
+```
 
-## Technologies Used
+Note the API Gateway URL and CloudFront domain from the output — you'll need them next.
 
-### Cloud & Infrastructure
-- AWS EC2, ECR, Route 53, Application Load Balancer
-- Terraform
+### 2. Deploy the stable build
 
-### CI/CD & Containerization
-- GitHub Actions
-- Docker & Docker Compose
+The `stable/` S3 prefix holds the original build. CloudFront serves from this prefix by default and only switches to `live/` after a user push.
 
-### Application & Tooling
-- Node.js (Web Application)
-- Monaco Editor
-- Linux, Bash, YAML
+```bash
+cd reflex-web
+npm ci
+npm run build
+aws s3 sync dist/ s3://<bucket-name>/stable/ --delete
+```
 
-### Monitoring
-- Prometheus
-- Grafana
-- Node Exporter
+### 3. Configure the frontend
 
-## ⚠️ Important Notes
-This is an **experimental project** designed for learning and demonstration purposes. The ability for a deployed application to modify its own source code introduces significant security and operational considerations that would need careful evaluation before any production use.
+For local development, copy the API Gateway URL into a `.env` file:
 
-## Author
-[Dhanika Weerasekara - dhanikaweerasekara@outlook.com]
+```bash
+echo "VITE_API_BASE_URL=https://<api-id>.execute-api.<region>.amazonaws.com" > reflex-web/.env
+```
+
+For the deployed version, this is not needed — the Lambda environment variables are injected by Terraform.
+
+## API
+
+| Method | Path             | Request body | Response | Side effects |
+|--------|------------------|-------------|----------|--------------|
+| GET | `/current-state` | — | `{ state, modifiedBy, modifiedAt }` | None |
+| POST | `/push` | Plain text (edited JSX source) | `{ success: true }` | Starts CodeBuild, sets SSM to `modified`, sets `owner` cookie |
+| POST | `/reset` | — | `{ success: true }` | Sets SSM to `stable`, invalidates CloudFront, clears `owner` cookie |
+| GET | `/source` | — | `text/plain` (original `page.jsx` content) | None |
+
+### Cookie behavior
+
+- After a successful push, the server sets `owner=true; Path=/; Max-Age=86400; SameSite=Lax`. The frontend reads this cookie to show "Reset to original" (owner) vs "Someone modified this — reset it?" (non-owner).
+- After reset, the server clears the cookie with `Max-Age=0`.
+
+## Local development
+
+```bash
+cd reflex-web
+npm install
+npm run dev
+```
+
+The dev server starts on `http://localhost:5173`. If `VITE_API_BASE_URL` is set, the frontend will call the deployed API. Without it, fetch calls target the same origin (useful for development behind a proxy).
+
+## Architecture overview
+
+```
+   Browser                        AWS
+   ───────                        ───
+  Monaco editor            ┌─────────────────┐
+  loads & edits page.jsx   │  API Gateway     │
+       │                   │  HTTP API        │
+       │  POST /push       │  POST /push      │──→ push Lambda ──→ CodeBuild
+       │──────────────────→│  GET /current-state │                   │
+       │                   │  POST /reset     │──→ reset Lambda      │
+       │                   │  GET /source     │──→ source Lambda     │
+       │                   └─────────────────┘                   │
+       │                                                         │
+       │  CloudFront                                              │
+       │  serves from S3 stable/ or live/                        │
+       │  ─────────────────────────────────────→ S3 (stable/) ◄─── npm run build
+       │                                            (live/)        aws s3 sync
+```
+
+## License
+
+MIT
