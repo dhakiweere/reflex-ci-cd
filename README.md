@@ -63,6 +63,7 @@ Terraform modules for the full AWS stack.
 | `codebuild` | Project with GitHub source, reads `buildspec.yml`, env vars for S3 + CloudFront |
 | `ssm` | Parameter `/reflex/state` initialized to `{ state: "stable" }` |
 | `iam` | Roles for Lambda (SSM, S3, CodeBuild, CloudFront, logs) and CodeBuild (S3, CloudFront, logs) |
+| `cloudwatch` | Dashboard (CodeBuild + Lambda + CloudFront metrics), Lambda error/SNS alarms, CloudFront log bucket, Logs Insights queries |
 
 ### buildspec.yml
 
@@ -157,6 +158,33 @@ The dev server starts on `http://localhost:5173`. If `VITE_API_BASE_URL` is set,
        │  ─────────────────────────────────────→ S3 (stable/) ◄─── npm run build
        │                                            (live/)        aws s3 sync
 ```
+
+## Observability
+
+Reflex ships with a full observability stack provisioned as Terraform code.
+
+### CloudWatch Dashboard
+
+A real-time dashboard with widgets monitoring pipeline health at a glance:
+
+| Widget | Metric |
+|--------|--------|
+| CodeBuild success vs failure | `BuildSucceeded` / `BuildFailed` over time |
+| Lambda invocations + errors | `Invocations`, `Errors` per function |
+| CloudFront request count | Total `Requests` through the distribution |
+
+### CloudFront Access Logging
+
+Standard access logs are delivered to a dedicated S3 log bucket. CloudWatch Logs Insights queries run against these logs to detect anomalous 4xx/5xx error rate spikes in the minutes immediately following a user push — catching bad deploys before a human notices.
+
+### Alarms
+
+- **Lambda error alarm** — fires on `push` and `reset` function errors, publishes to an SNS topic.
+- **Build duration anomaly alarm** — CloudWatch anomaly detection band on CodeBuild `Duration`, triggers if build times deviate from baseline.
+
+### X-Ray Tracing
+
+Active tracing is enabled on API Gateway and all four Lambda functions. Every push→build→deploy cycle produces a single distributed trace with segment timing per service, making internal pipeline latency transparent.
 
 ## License
 

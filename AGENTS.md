@@ -9,7 +9,7 @@ Reflex — a self-modifying web application. A React + Vite SPA embedded with a 
 ```
 reflex-web/       ← React 18 + Vite 5 frontend (all commands run from here)
 reflex-api/       ← Node 20 Lambda handlers (ES modules, raw handlers)
-reflex-infra/     ← Terraform (S3, CloudFront, Lambda, API Gateway, CodeBuild, SSM)
+reflex-infra/     ← Terraform (S3, CloudFront, Lambda, API Gateway, CodeBuild, SSM, IAM, CloudWatch)
 buildspec.yml     ← CodeBuild buildspec at repo root
 ```
 
@@ -42,7 +42,7 @@ There are **no test, lint, typecheck, or format commands**.
 ## Infrastructure (Terraform)
 
 - Run from `reflex-infra/`.
-- Modules: S3 (two prefixes: `stable/` and `live/`), CloudFront, Lambda, API Gateway, CodeBuild, SSM, IAM.
+- Modules: S3 (two prefixes: `stable/` and `live/`), CloudFront, Lambda, API Gateway, CodeBuild, SSM, IAM, CloudWatch.
 - SSM parameter `/reflex/state` stores `{ state, modifiedBy, modifiedAt }`.
 - CodeBuild source is the GitHub repo, reads `buildspec.yml` at repo root.
 - The Lambda deployment package is built by `archive_file` from `reflex-api/` at `terraform apply` time.
@@ -59,3 +59,11 @@ There are **no test, lint, typecheck, or format commands**.
 1. User clicks Reset.
 2. `reset` Lambda sets SSM state to `stable`, invalidates CloudFront `/*`.
 3. CloudFront origin points to S3 `stable/` prefix (unchanged original build) — visitors see the original.
+
+## Observability (CloudWatch)
+
+- **Dashboard** — real-time widgets graphing CodeBuild success/failure metrics, Lambda invocations + errors, and CloudFront request counts. Provisioned via Terraform.
+- **CloudFront access logging** — standard logs enabled on the distribution, delivered to an S3 log bucket. Logs Insights queries detect anomalous 4xx/5xx spikes after each push for post-deploy health verification.
+- **Lambda alarms** — CloudWatch alarms on `push` and `reset` Lambda `Errors` metric with SNS notification. Build duration anomaly detection alert via deviation band.
+- **X-Ray tracing** — active tracing enabled on API Gateway and all four Lambda functions, providing end-to-end trace segments for every push→build→deploy cycle.
+- All observability resources (dashboards, alarms, log groups, SNS topics) are defined as Terraform code in the `cloudwatch` module and deployed atomically with the rest of the infrastructure.
