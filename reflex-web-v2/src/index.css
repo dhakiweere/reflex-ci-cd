@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+@theme {
+  --color-main: #0d021c;
+  --color-sidebar: #0d021cee;
+  --color-accent: #F25912;
+
+  --font-momo: 'Momo Trust Display';
+  --font-inconsolata: 'Inconsolata';
+}
+
+@layer base {
+  * {
+    @apply text-white font-inconsolata;
+  }
+}
+
+@layer components {
+  .container-top {
+    @apply bg-main flex flex-col justify-start items-center overflow-y-scroll;
+  }
+
+  .container-header {
+    @apply bg-main border-b-2 border-accent flex flex-row items-center gap-x-2 p-2 px-3;
+  }
+
+  .container-actual {
+    @apply flex flex-col gap-y-7 justify-start p-3;
+  }
+
+  .container-pg1 {
+    @apply flex flex-col md:flex-row gap-y-6 justify-start md:justify-center items-start p-3;
+  }
+
+  .container-pg2 {
+    @apply w-full;
+  }
+
+  .title {
+    @apply text-accent font-momo font-bold text-3xl md:text-4xl;
+  }
+
+  .subtitle {
+    @apply text-white text-5xl md:text-7xl font-bold;
+  }
+
+  .accent-btn {
+    @apply bg-accent text-white rounded-4xl font-momo border-2 border-transparent;
+  }
+
+  .accent-btn:hover {
+    @apply bg-amber-50 text-accent border-accent;
+  }
+
+  .btn {
+    @apply cursor-pointer duration-150 text-center;
+  }
+
+  .btn:hover {
+    @apply scale-110;
+  }
+
+  .btn:active {
+    @apply scale-105;
+  }
+
+  .commit-details {
+    @apply text-xl p-3 font-semibold flex flex-col gap-y-3;
+  }
+
+  .inpt {
+    @apply border-b border-white text-accent font-mono ps-2;
+  }
+
+  .inpt:focus {
+    @apply border-b-accent outline-0;
+  }
+
+  .btn-disabled {
+    @apply bg-gray-500 p-1 md:px-4 rounded-sm cursor-not-allowed w-fit;
+  }
+
+  .accent-sq-btn {
+    @apply w-fit h-fit bg-accent text-white rounded-sm border border-transparent p-1;
+  }
+
+  .accent-sq-btn:hover {
+    @apply bg-white border-accent text-accent;
+  }
+
+  .accent2-sq-btn {
+    @apply w-fit h-fit bg-yellow-500 text-white rounded-sm border border-transparent p-1;
+  }
+
+  .accent2-sq-btn:hover {
+    @apply bg-white border-yellow-500 text-yellow-500;
+  }
+
+  .editor-wrapper {
+    width: 100%;
+    max-width: 960px;
+    height: 500px;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+  }
+
+  .status-bar {
+    @apply text-accent font-semibold;
+  }
+}
+
+@layer utilities {
+  .text-shadow-accent {
+    text-shadow: 2px 2px 10px var(--color-accent);
+  }
+}
